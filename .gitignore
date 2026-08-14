@@ -28,3 +28,4 @@ skills/
 
 # Environment
 .env.local
+.worktrees/
