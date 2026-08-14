@@ -9,9 +9,18 @@ from typing import Optional
 import aiosqlite
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS skills (
+CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
+    display_name TEXT,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS skills (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
     display_name TEXT,
     description TEXT,
     category TEXT,
@@ -21,7 +30,9 @@ CREATE TABLE IF NOT EXISTS skills (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     published_by TEXT,
-    download_count INTEGER DEFAULT 0
+    download_count INTEGER DEFAULT 0,
+    project_id TEXT DEFAULT NULL,
+    UNIQUE(name, project_id)
 );
 
 CREATE TABLE IF NOT EXISTS skill_files (
@@ -68,6 +79,15 @@ class Database:
         except aiosqlite.OperationalError:
             pass  # Column already exists
 
+        # Migration: add project_id column to existing databases
+        try:
+            await self._conn.execute(
+                "ALTER TABLE skills ADD COLUMN project_id TEXT DEFAULT NULL"
+            )
+            await self._conn.commit()
+        except aiosqlite.OperationalError:
+            pass  # Column already exists
+
     async def close(self) -> None:
         if self._conn:
             await self._conn.close()
@@ -80,7 +100,7 @@ class Database:
         return self._conn
 
     def _build_filter(
-        self, query: Optional[str], category: Optional[str]
+        self, query: Optional[str], category: Optional[str], project_id: Optional[str] = None
     ) -> tuple[list[str], list]:
         conditions, params = [], []
         if query:
@@ -92,7 +112,79 @@ class Database:
         if category:
             conditions.append("category = ?")
             params.append(category)
+        if project_id is not None:
+            conditions.append("project_id = ?")
+            params.append(project_id)
         return conditions, params
+
+    # --- Projects CRUD ---
+
+    async def create_project(
+        self,
+        name: str,
+        display_name: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> dict:
+        project_id = str(uuid.uuid4())
+        now = datetime.now(UTC).isoformat()
+
+        await self.conn.execute(
+            """INSERT INTO projects (id, name, display_name, description, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (project_id, name, display_name, description, now, now),
+        )
+        await self.conn.commit()
+        return await self.get_project(project_id)
+
+    async def get_project(self, project_id: str) -> Optional[dict]:
+        async with self.conn.execute(
+            "SELECT * FROM projects WHERE id = ?", (project_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return dict(row)
+        return None
+
+    async def get_project_by_name(self, name: str) -> Optional[dict]:
+        async with self.conn.execute(
+            "SELECT * FROM projects WHERE name = ?", (name,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return dict(row)
+        return None
+
+    async def update_project(self, project_id: str, **kwargs) -> Optional[dict]:
+        kwargs["updated_at"] = datetime.now(UTC).isoformat()
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs)
+        values = list(kwargs.values()) + [project_id]
+
+        await self.conn.execute(
+            f"UPDATE projects SET {set_clause} WHERE id = ?", values
+        )
+        await self.conn.commit()
+        return await self.get_project(project_id)
+
+    async def delete_project(self, project_id: str) -> bool:
+        async with self.conn.execute(
+            "DELETE FROM projects WHERE id = ?", (project_id,)
+        ) as cursor:
+            await self.conn.commit()
+            return cursor.rowcount > 0
+
+    async def list_projects(self) -> list[dict]:
+        async with self.conn.execute(
+            "SELECT * FROM projects ORDER BY created_at DESC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def count_skills_in_project(self, project_id: str) -> int:
+        async with self.conn.execute(
+            "SELECT COUNT(*) FROM skills WHERE project_id = ?", (project_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
 
     # --- Skills CRUD ---
 
@@ -106,6 +198,7 @@ class Database:
         author: Optional[str] = None,
         license: Optional[str] = None,
         published_by: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> dict:
         skill_id = str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
@@ -113,10 +206,10 @@ class Database:
 
         await self.conn.execute(
             """INSERT INTO skills (id, name, display_name, description, category,
-               tags, author, license, created_at, updated_at, published_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               tags, author, license, created_at, updated_at, published_by, project_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (skill_id, name, display_name, description, category,
-             tags_json, author, license, now, now, published_by),
+             tags_json, author, license, now, now, published_by, project_id),
         )
         await self.conn.commit()
         return await self.get_skill(skill_id)
@@ -130,9 +223,10 @@ class Database:
                 return dict(row)
         return None
 
-    async def get_skill_by_name(self, name: str) -> Optional[dict]:
+    async def get_skill_by_name(self, name: str, project_id: Optional[str] = None) -> Optional[dict]:
         async with self.conn.execute(
-            "SELECT * FROM skills WHERE name = ?", (name,)
+            "SELECT * FROM skills WHERE name = ? AND project_id IS ?",
+            (name, project_id),
         ) as cursor:
             row = await cursor.fetchone()
             if row:
@@ -161,11 +255,12 @@ class Database:
         self,
         query: Optional[str] = None,
         category: Optional[str] = None,
+        project_id: Optional[str] = None,
         sort: str = "updated_at",
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict]:
-        conditions, params = self._build_filter(query, category)
+        conditions, params = self._build_filter(query, category, project_id)
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         sort_col = sort if sort in ALLOWED_SORT_FIELDS else "updated_at"
         order = f" ORDER BY {sort_col} DESC"
@@ -178,9 +273,10 @@ class Database:
             return [dict(row) for row in rows]
 
     async def count_skills(
-        self, query: Optional[str] = None, category: Optional[str] = None
+        self, query: Optional[str] = None, category: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> int:
-        conditions, params = self._build_filter(query, category)
+        conditions, params = self._build_filter(query, category, project_id)
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
 
         async with self.conn.execute(

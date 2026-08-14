@@ -18,7 +18,6 @@ def parse_skill_md(path: Path) -> dict:
     result = parse_frontmatter(content)
     return result if result else {"name": path.name}
 
-
 def collect_files(path: Path) -> list[tuple[str, bytes]]:
     files = []
     for file_path in path.rglob("*"):
@@ -31,7 +30,8 @@ def collect_files(path: Path) -> list[tuple[str, bytes]]:
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
 @click.option("--force", is_flag=True, help="Overwrite existing skill")
 @click.option("--server", help="Override registry server URL")
-def push(path: Path, force: bool, server: str):
+@click.option("--project", "-p", default=None, help="Project name (uses default_project from config if omitted)")
+def push(path: Path, force: bool, server: str, project: str):
     """Publish a skill to the registry.
 
     PATH is the directory containing SKILL.md and skill files.
@@ -39,10 +39,15 @@ def push(path: Path, force: bool, server: str):
     config = load_config()
     registry_url = server or config.registry_url
 
+    # Resolve project: CLI flag > config default
+    project_name = project or config.default_project
+
     metadata = parse_skill_md(path)
     name = metadata.get("name", path.name)
 
     click.echo(f"Publishing skill: {name}")
+    if project_name:
+        click.echo(f"  Project: {project_name}")
 
     files = collect_files(path)
     click.echo(f"  Files: {len(files)}")
@@ -61,6 +66,8 @@ def push(path: Path, force: bool, server: str):
             "author": metadata.get("author", ""),
             "license": metadata.get("license", ""),
         }
+        if project_name:
+            data["project"] = project_name
 
         upload_files = []
         for filename, content in files:

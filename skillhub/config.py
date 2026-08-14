@@ -33,11 +33,11 @@ class AppConfig(BaseModel):
     registry_url: str = "http://127.0.0.1:8000"
     admin: AdminConfig = Field(default_factory=AdminConfig)
     api_token: str = ""
+    default_project: Optional[str] = None
 
 
 CONFIG_DIR = Path.home() / ".skillhub"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
-
 
 def load_config(config_path: Optional[Path] = None) -> AppConfig:
     """Load configuration from YAML file, falling back to defaults.
@@ -47,6 +47,7 @@ def load_config(config_path: Optional[Path] = None) -> AppConfig:
     - SKILLHUB_SKILLS_DIR: overrides storage.skills_dir
     - SKILLHUB_HOST: overrides server.host
     - SKILLHUB_PORT: overrides server.port
+    - SKILLHUB_DEFAULT_PROJECT: overrides default_project
     """
     path = config_path or CONFIG_FILE
     if path.exists():
@@ -65,9 +66,10 @@ def load_config(config_path: Optional[Path] = None) -> AppConfig:
         config.server.host = host
     if port := os.environ.get("SKILLHUB_PORT"):
         config.server.port = int(port)
+    if default_project := os.environ.get("SKILLHUB_DEFAULT_PROJECT"):
+        config.default_project = default_project
 
     return config
-
 
 def save_config(config: AppConfig, config_path: Optional[Path] = None) -> None:
     """Save configuration to YAML file."""

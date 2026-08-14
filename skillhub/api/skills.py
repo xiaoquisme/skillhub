@@ -15,6 +15,8 @@ router = APIRouter(prefix="/api/skills", tags=["skills"])
 
 def _skill_from_row(row: dict) -> SkillResponse:
     tags = json.loads(row["tags"]) if row.get("tags") else []
+    # Resolve project_id to project name if present
+    project_name = row.get("project_name") if "project_name" in row else None
     return SkillResponse(
         id=row["id"],
         name=row["name"],
@@ -28,6 +30,7 @@ def _skill_from_row(row: dict) -> SkillResponse:
         updated_at=row["updated_at"],
         published_by=row.get("published_by"),
         download_count=row.get("download_count", 0),
+        project=project_name or row.get("project_id"),
     )
 
 
@@ -36,14 +39,23 @@ async def list_skills(
     request: Request,
     q: Optional[str] = Query(None, description="Search query"),
     category: Optional[str] = Query(None, description="Filter by category"),
+    project: Optional[str] = Query(None, description="Filter by project name"),
     sort: str = Query("updated_at", description="Sort field"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Database = Depends(get_db),
 ):
     await require_auth(request, db)
+
+    # Resolve project name to project_id if provided
+    project_id = None
+    if project:
+        proj = await db.get_project_by_name(project)
+        if proj:
+            project_id = proj["id"]
+
     skills = await db.list_skills(
-        query=q, category=category, sort=sort, limit=limit, offset=offset
+        query=q, category=category, project_id=project_id, sort=sort, limit=limit, offset=offset
     )
     return [_skill_from_row(s) for s in skills]
 
@@ -84,7 +96,8 @@ async def download_skill_file(
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
 
-    file_path = storage.get_skill_file_path(skill_id, filename)
+    project_id = skill.get("project_id")
+    file_path = storage.get_skill_file_path(skill_id, filename, project_id)
     if not file_path:
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -108,6 +121,7 @@ async def publish_skill(
     tags: Optional[str] = Form(None),
     author: Optional[str] = Form(None),
     license: Optional[str] = Form(None),
+    project: Optional[str] = Form(None),
     files: list[UploadFile] = File(default=[]),
     db: Database = Depends(get_db),
     storage: SkillStorage = Depends(get_storage),
@@ -116,7 +130,15 @@ async def publish_skill(
     current_user = await require_auth(request, db)
     tags_list = json.loads(tags) if tags else []
 
-    existing = await db.get_skill_by_name(name)
+    # Resolve project name to project_id
+    project_id = None
+    if project:
+        proj = await db.get_project_by_name(project)
+        if not proj:
+            raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+        project_id = proj["id"]
+
+    existing = await db.get_skill_by_name(name, project_id)
 
     if existing:
         skill_id = existing["id"]
@@ -144,13 +166,14 @@ async def publish_skill(
             author=author,
             license=license,
             published_by=current_user["id"],
+            project_id=project_id,
         )
         skill_id = record["id"]
 
     for upload_file in files:
         content = await upload_file.read()
         filename = upload_file.filename or "unnamed"
-        storage.save_skill_file(skill_id, filename, content)
+        storage.save_skill_file(skill_id, filename, content, project_id)
         await db.add_skill_file(
             skill_id=skill_id,
             filename=filename,
@@ -182,6 +205,7 @@ async def delete_skill(
         if skill.get("published_by") != current_user["id"]:
             raise HTTPException(status_code=403, detail="You can only delete your own skills")
 
-    storage.delete_skill(skill_id)
+    project_id = skill.get("project_id")
+    storage.delete_skill(skill_id, project_id)
     await db.delete_skill(skill_id)
     return None

@@ -8,6 +8,7 @@
     var searchBtn = document.getElementById('search-btn');
     var categoryFilter = document.getElementById('category-filter');
     var sortFilter = document.getElementById('sort-filter');
+    var projectFilter = document.getElementById('project-filter');
     var skillList = document.getElementById('skill-list');
     var modal = document.getElementById('skill-modal');
     var skillDetail = document.getElementById('skill-detail');
@@ -41,7 +42,8 @@
         skillList.innerHTML = '<div class="loading">' + t('loading.skills') + '</div>';
 
         try {
-            allSkills = await API.listSkills({ query, category, sort });
+            var project = projectFilter ? projectFilter.value : '';
+            allSkills = await API.listSkills({ query, category, sort, project: project || undefined });
             categories = new Set(allSkills.map(s => s.category).filter(Boolean));
             updateCategoryFilter();
             renderSkills(allSkills);
@@ -76,6 +78,7 @@
                 '<p class="description">' + escapeHtml(skill.description || t('skill.no_description')) + '</p>' +
                 '<div class="meta">' +
                     (skill.category ? '<span class="category">' + escapeHtml(skill.category) + '</span>' : '') +
+                    (skill.project ? '<span class="tag project-tag">' + escapeHtml(skill.project) + '</span>' : '') +
                     (skill.tags || []).map(function(tag) { return '<span class="tag">' + escapeHtml(tag) + '</span>'; }).join('') +
                 '</div>' +
             '</div>';
@@ -127,6 +130,8 @@
                 '<dt>' + t('skill.detail.author') + '</dt><dd>' + escapeHtml(skill.author) + '</dd>' : '';
             var categoryHtml = skill.category ?
                 '<dt>' + t('skill.detail.category') + '</dt><dd>' + escapeHtml(skill.category) + '</dd>' : '';
+            var projectHtml = skill.project ?
+                '<dt>Project</dt><dd>' + escapeHtml(skill.project) + '</dd>' : '';
             var licenseHtml = skill.license ?
                 '<dt>' + t('skill.detail.license') + '</dt><dd>' + escapeHtml(skill.license) + '</dd>' : '';
             var tagsHtml = (skill.tags || []).length > 0 ?
@@ -145,7 +150,7 @@
                 '<p class="description">' + escapeHtml(skill.description || t('skill.no_description_available')) + '</p>' +
                 '<dl class="metadata">' +
                     '<dt>' + t('skill.detail.name') + '</dt><dd>' + escapeHtml(skill.name) + '</dd>' +
-                    authorHtml + categoryHtml + licenseHtml + tagsHtml +
+                    authorHtml + categoryHtml + projectHtml + licenseHtml + tagsHtml +
                     '<dt>' + t('skill.detail.updated') + '</dt><dd>' + formatDate(skill.updated_at) + '</dd>' +
                 '</dl>' +
                 filesHtml + mdHtml +
@@ -201,6 +206,10 @@
 
         categoryFilter.addEventListener('change', performSearch);
         sortFilter.addEventListener('change', performSearch);
+
+        if (projectFilter) {
+            projectFilter.addEventListener('change', performSearch);
+        }
 
         modalClose.addEventListener('click', function() { modal.classList.add('hidden'); });
         modal.addEventListener('click', function(e) {

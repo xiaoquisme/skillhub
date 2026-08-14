@@ -434,6 +434,30 @@ body {
     font-size: 12px;
 }
 
+.skill-card .project-tag {
+    background: #10b981;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+/* ========== Project Select ========== */
+.project-select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px 8px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+}
+
+.project-select:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
 /* ========== Modal ========== */
 .modal {
     position: fixed;

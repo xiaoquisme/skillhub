@@ -17,6 +17,9 @@
                 <a href="/ui/admin.html" class="nav-link nav-admin hidden" id="nav-admin">后端管理</a>
             </div>
             <div class="nav-actions">
+                <select id="project-filter" class="project-select hidden">
+                    <option value="">所有项目</option>
+                </select>
                 <span id="user-status" class="user-status hidden"></span>
                 <a href="/ui/login.html" class="btn btn-sm btn-outline" id="login-link">登录</a>
                 <button class="btn btn-sm btn-outline hidden" id="logout-btn">退出</button>
@@ -75,6 +78,7 @@
             const logoutBtn = document.getElementById('logout-btn');
             const userStatus = document.getElementById('user-status');
             const navAdmin = document.getElementById('nav-admin');
+            const projectFilter = document.getElementById('project-filter');
 
             if (Auth.isLoggedIn()) {
                 loginLink.classList.add('hidden');
@@ -91,6 +95,28 @@
                 if (Auth.isAdmin()) {
                     navAdmin.classList.remove('hidden');
                 }
+
+                // Show project filter for logged-in users
+                projectFilter.classList.remove('hidden');
+
+                // Load projects into dropdown
+                loadProjects();
+
+                // Restore selected project from localStorage
+                const savedProject = localStorage.getItem('skillhub_selected_project');
+                if (savedProject) {
+                    projectFilter.value = savedProject;
+                }
+
+                // Handle project selection
+                projectFilter.addEventListener('change', function() {
+                    const selected = this.value;
+                    localStorage.setItem('skillhub_selected_project', selected);
+                    // Trigger skill list refresh with project filter
+                    if (typeof loadSkills === 'function') {
+                        loadSkills();
+                    }
+                });
             } else {
                 loginLink.classList.remove('hidden');
                 logoutBtn.classList.add('hidden');
@@ -102,6 +128,28 @@
                 window.location.href = '/ui/login.html';
             });
         });
+
+        async function loadProjects() {
+            const projectFilter = document.getElementById('project-filter');
+            try {
+                const response = await Api.get('/api/projects');
+                if (response.ok) {
+                    const projects = await response.json();
+                    // Clear existing options except "All Projects"
+                    while (projectFilter.options.length > 1) {
+                        projectFilter.remove(1);
+                    }
+                    projects.forEach(project => {
+                        const option = document.createElement('option');
+                        option.value = project.name;
+                        option.textContent = project.display_name || project.name;
+                        projectFilter.appendChild(option);
+                    });
+                }
+            } catch (e) {
+                console.error('Failed to load projects:', e);
+            }
+        }
     </script>
 </body>
 </html>

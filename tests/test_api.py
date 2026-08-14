@@ -1028,3 +1028,195 @@ async def test_invalid_token_rejected():
         await test_db.close()
         deps._db = None
         deps._config = None
+
+
+# ============================================================
+# Multi-Project Tests
+# ============================================================
+
+@pytest.mark.asyncio
+async def test_create_project():
+    """Test creating a project via API."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        test_config = AppConfig(
+            storage=StorageConfig(
+                data_dir=tmpdir_path / "data",
+                skills_dir=tmpdir_path / "skills",
+            ),
+        )
+        test_db = Database(test_config.storage.data_dir / "skillhub.db")
+        await test_db.connect()
+
+        deps._config = test_config
+        deps._db = test_db
+
+        admin_user = await test_db.create_user(
+            username="admin-project-test",
+            password_hash=hash_password("pass"),
+            role="admin",
+        )
+        token = create_token(admin_user["id"], "admin")
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/projects",
+                json={"name": "alpha", "display_name": "Alpha Project"},
+                headers=auth_headers(token),
+            )
+            assert response.status_code == 201
+            data = response.json()
+            assert data["name"] == "alpha"
+            assert data["display_name"] == "Alpha Project"
+            assert "id" in data
+
+        await test_db.close()
+        deps._db = None
+        deps._config = None
+
+
+@pytest.mark.asyncio
+async def test_same_skill_name_different_projects():
+    """Test that the same skill name can exist in different projects."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        test_config = AppConfig(
+            storage=StorageConfig(
+                data_dir=tmpdir_path / "data",
+                skills_dir=tmpdir_path / "skills",
+            ),
+        )
+        test_db = Database(test_config.storage.data_dir / "skillhub.db")
+        storage = SkillStorage(test_config.storage.skills_dir)
+        await test_db.connect()
+
+        deps._config = test_config
+        deps._db = test_db
+        deps._storage = storage
+
+        admin_user = await test_db.create_user(
+            username="admin-multi-proj",
+            password_hash=hash_password("pass"),
+            role="admin",
+        )
+        token = create_token(admin_user["id"], "admin")
+
+        # Create two projects
+        proj_alpha = await test_db.create_project(name="alpha")
+        proj_beta = await test_db.create_project(name="beta")
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # Publish same skill name to both projects
+            response = await client.post(
+                "/api/skills",
+                data={"name": "debugging", "project": "alpha"},
+                headers=auth_headers(token),
+            )
+            assert response.status_code == 201
+
+            response = await client.post(
+                "/api/skills",
+                data={"name": "debugging", "project": "beta"},
+                headers=auth_headers(token),
+            )
+            assert response.status_code == 201
+
+            # List all skills - should see both
+            response = await client.get("/api/skills", headers=auth_headers(token))
+            assert response.status_code == 200
+            skills = response.json()
+            assert len(skills) == 2
+
+            # Filter by project alpha
+            response = await client.get(
+                "/api/skills?project=alpha", headers=auth_headers(token)
+            )
+            assert response.status_code == 200
+            skills = response.json()
+            assert len(skills) == 1
+            assert skills[0]["name"] == "debugging"
+
+        await test_db.close()
+        deps._db = None
+        deps._config = None
+        deps._storage = None
+
+
+@pytest.mark.asyncio
+async def test_project_delete_blocks_with_skills():
+    """Test that deleting a project with skills is blocked."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        test_config = AppConfig(
+            storage=StorageConfig(
+                data_dir=tmpdir_path / "data",
+                skills_dir=tmpdir_path / "skills",
+            ),
+        )
+        test_db = Database(test_config.storage.data_dir / "skillhub.db")
+        await test_db.connect()
+
+        deps._config = test_config
+        deps._db = test_db
+
+        admin_user = await test_db.create_user(
+            username="admin-delete-proj",
+            password_hash=hash_password("pass"),
+            role="admin",
+        )
+        token = create_token(admin_user["id"], "admin")
+
+        # Create project with a skill
+        proj = await test_db.create_project(name="doomed")
+        await test_db.create_skill(name="orphan", project_id=proj["id"])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.delete(
+                f"/api/projects/{proj['id']}", headers=auth_headers(token)
+            )
+            assert response.status_code == 409
+
+        await test_db.close()
+        deps._db = None
+        deps._config = None
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_create_project():
+    """Test that non-admin users cannot create projects."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        test_config = AppConfig(
+            storage=StorageConfig(
+                data_dir=tmpdir_path / "data",
+                skills_dir=tmpdir_path / "skills",
+            ),
+        )
+        test_db = Database(test_config.storage.data_dir / "skillhub.db")
+        await test_db.connect()
+
+        deps._config = test_config
+        deps._db = test_db
+
+        publisher = await test_db.create_user(
+            username="pub-no-proj",
+            password_hash=hash_password("pass"),
+            role="publisher",
+        )
+        token = create_token(publisher["id"], "publisher")
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/projects",
+                json={"name": "nope"},
+                headers=auth_headers(token),
+            )
+            assert response.status_code == 403
+
+        await test_db.close()
+        deps._db = None
+        deps._config = None
