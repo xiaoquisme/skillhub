@@ -18,7 +18,13 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           password: ${{ secrets.DEPLOY_PASSWORD }}
           script: |
+            set -e
+            
             cd /root/skillhub
+            
+            # Reset any local changes before pulling
+            echo ">>> Cleaning local changes..."
+            git reset --hard origin/main
             
             # Pull latest code
             echo ">>> Pulling latest code..."
