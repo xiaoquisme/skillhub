@@ -12,13 +12,16 @@ from skillhub.api.deps import get_config, get_db, get_storage
 from skillhub.api.skills import router as skills_router
 from skillhub.api.auth import router as auth_router
 from skillhub.api.users import router as users_router
-
+from skillhub.api.projects import router as projects_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = await get_config()
     db = await get_db(config)
     storage = await get_storage(config)
+
+    # Migrate legacy skill directories to default/ subdirectory
+    storage.migrate_legacy_skills()
 
     # U5: Create admin user from config preset if configured
     if config.admin.password_hash:
@@ -54,10 +57,10 @@ app.add_middleware(
 async def health():
     return {"status": "ok", "service": "skillhub"}
 
-
 app.include_router(skills_router)
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(projects_router)
 
 
 # --- Auth middleware for UI pages ---
@@ -66,7 +69,6 @@ app.include_router(users_router)
 
 PUBLIC_UI_PATHS = {"/ui/login.html"}
 UI_ASSET_PREFIXES = ("/ui/css/", "/ui/js/", "/ui/locales/")
-
 
 @app.middleware("http")
 async def auth_redirect_middleware(request: Request, call_next):

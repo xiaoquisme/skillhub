@@ -4,6 +4,26 @@ from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field
 
+# --- Project models ---
+
+class ProjectBase(BaseModel):
+    name: str
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ProjectCreate(ProjectBase):
+    pass
+
+
+class ProjectResponse(ProjectBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+# --- Skill models ---
+
 class SkillBase(BaseModel):
     name: str
     display_name: Optional[str] = None
@@ -12,6 +32,7 @@ class SkillBase(BaseModel):
     tags: list[str] = Field(default_factory=list)
     author: Optional[str] = None
     license: Optional[str] = None
+    project: Optional[str] = None
 
 
 class SkillCreate(SkillBase):

@@ -1,30 +1,37 @@
 """Install a skill from the registry."""
-
 import json
 from pathlib import Path
-
 import click
 import httpx
 
 from skillhub.config import load_config
 
-
 @click.command()
 @click.argument("name")
 @click.option("--category", "-c", help="Install to specific category subdirectory")
 @click.option("--server", help="Override registry server URL")
-def install(name: str, category: str, server: str):
+@click.option("--project", "-p", default=None, help="Project name (uses default_project from config if omitted)")
+def install(name: str, category: str, server: str, project: str):
     """Install a skill from the registry to ~/.hermes/skills/."""
     config = load_config()
     registry_url = server or config.registry_url
 
+    # Resolve project: CLI flag > config default
+    project_name = project or config.default_project
+
     click.echo(f"Installing skill: {name}")
+    if project_name:
+        click.echo(f"  Project: {project_name}")
 
     with httpx.Client(timeout=30.0) as client:
         # Search for the skill by name
+        params = {"q": name}
+        if project_name:
+            params["project"] = project_name
+
         response = client.get(
             f"{registry_url}/api/skills",
-            params={"q": name},
+            params=params,
         )
 
         if response.status_code != 200:
