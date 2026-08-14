@@ -40,6 +40,44 @@ const Admin = {
         if (loadUsersBtn) {
             loadUsersBtn.addEventListener('click', () => this.loadUsers());
         }
+
+        // Create project form
+        const createProjectForm = document.getElementById('create-project-form');
+        if (createProjectForm) {
+            createProjectForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const name = document.getElementById('new-project-name').value;
+                const display_name = document.getElementById('new-project-display-name').value || null;
+                const description = document.getElementById('new-project-description').value || null;
+
+                try {
+                    const response = await fetch('/api/projects', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + Auth.getToken(),
+                        },
+                        body: JSON.stringify({ name, display_name, description }),
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json().catch(() => ({}));
+                        throw new Error(error.detail || '创建项目失败');
+                    }
+
+                    createProjectForm.reset();
+                    this.loadProjects();
+                } catch (err) {
+                    alert(err.message);
+                }
+            });
+        }
+
+        // Load projects button
+        const loadProjectsBtn = document.getElementById('load-projects-btn');
+        if (loadProjectsBtn) {
+            loadProjectsBtn.addEventListener('click', () => this.loadProjects());
+        }
     },
 
     async loadUsers() {
@@ -167,5 +205,97 @@ const Admin = {
         const div = document.createElement('div');
         div.textContent = str;
         return div.innerHTML;
-    }
+    },
+
+    // ========== Project Management ==========
+
+    async loadProjects() {
+        const container = document.getElementById('projects-list');
+        if (!container) return;
+
+        try {
+            const response = await fetch('/api/projects', {
+                headers: { 'Authorization': 'Bearer ' + Auth.getToken() },
+            });
+
+            if (!response.ok) throw new Error('加载项目失败');
+
+            const projects = await response.json();
+
+            if (projects.length === 0) {
+                container.innerHTML = '<p class="empty">暂无项目</p>';
+                return;
+            }
+
+            container.innerHTML = projects.map(project => `
+                <div class="user-card">
+                    <div class="user-info">
+                        <strong>${this.escapeHtml(project.display_name || project.name)}</strong>
+                        <span class="role-badge">${project.name}</span>
+                        ${project.description ? `<span class="text-muted">${this.escapeHtml(project.description)}</span>` : ''}
+                    </div>
+                    <div class="user-actions">
+                        <button class="btn btn-sm btn-secondary" onclick="Admin.editProject('${project.id}', '${this.escapeHtml(project.name)}', '${this.escapeHtml(project.display_name || '')}', '${this.escapeHtml(project.description || '')}')">编辑</button>
+                        <button class="btn btn-sm btn-danger" onclick="Admin.deleteProject('${project.id}', '${this.escapeHtml(project.display_name || project.name)}')">删除</button>
+                    </div>
+                </div>
+            `).join('');
+        } catch (err) {
+            container.innerHTML = '<p class="error">加载项目失败</p>';
+            console.error(err);
+        }
+    },
+
+    async editProject(projectId, name, displayName, description) {
+        const newName = prompt('项目名称 (英文):', name);
+        if (newName === null) return;
+        const newDisplayName = prompt('显示名称:', displayName);
+        if (newDisplayName === null) return;
+        const newDescription = prompt('描述:', description);
+        if (newDescription === null) return;
+
+        try {
+            const response = await fetch(`/api/projects/${projectId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + Auth.getToken(),
+                },
+                body: JSON.stringify({
+                    name: newName,
+                    display_name: newDisplayName || null,
+                    description: newDescription || null,
+                }),
+            });
+
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.detail || '编辑项目失败');
+            }
+
+            this.loadProjects();
+        } catch (err) {
+            alert(err.message);
+        }
+    },
+
+    async deleteProject(projectId, projectName) {
+        if (!confirm(`确定要删除项目 "${projectName}" 吗？\n注意：如果项目下有技能，将无法删除。`)) return;
+
+        try {
+            const response = await fetch(`/api/projects/${projectId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': 'Bearer ' + Auth.getToken() },
+            });
+
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.detail || '删除项目失败');
+            }
+
+            this.loadProjects();
+        } catch (err) {
+            alert(err.message);
+        }
+    },
 };
