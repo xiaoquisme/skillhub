@@ -1,0 +1,45 @@
+# Deploy to production when main branch changes
+# Requires GitHub secrets: DEPLOY_HOST, DEPLOY_USER, DEPLOY_PASSWORD
+
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          script: |
+            cd /root/skillhub
+            
+            # Pull latest code
+            echo ">>> Pulling latest code..."
+            git pull origin main
+            
+            # Rebuild and restart containers
+            echo ">>> Rebuilding containers..."
+            docker compose build skillhub
+            
+            echo ">>> Restarting service..."
+            docker compose up -d
+            
+            # Wait for health check
+            echo ">>> Waiting for service to be ready..."
+            sleep 5
+            
+            # Verify health
+            if curl -sf http://127.0.0.1:8000/api/health > /dev/null; then
+              echo ">>> ✅ Deployment successful! Service is healthy."
+            else
+              echo ">>> ❌ Health check failed!"
+              docker compose logs --tail=20
+              exit 1
+            fi
