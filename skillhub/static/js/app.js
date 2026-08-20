@@ -156,11 +156,19 @@
                 filesHtml + mdHtml +
                 '<div class="install-command">' +
                     '<code>skillhub install ' + escapeHtml(skill.name) + '</code>' +
-                    '<button class="copy-btn" onclick="copyInstallCommand(\'' + escapeHtml(skill.name) + '\')">' + t('skill.detail.copy') + '</button>' +
+                    '<button class="copy-btn" data-skill-name="' + escapeHtml(skill.name) + '">' + t('skill.detail.copy') + '</button>' +
                 '</div>' +
                 deleteHtml;
 
             modal.classList.remove('hidden');
+
+            var copyBtn = skillDetail.querySelector('.copy-btn');
+            if (copyBtn) {
+                copyBtn.addEventListener('click', function() {
+                    var name = this.getAttribute('data-skill-name');
+                    copyInstallCommand(name, this);
+                });
+            }
 
             var deleteBtn = skillDetail.querySelector('.delete-skill-btn');
             if (deleteBtn) {
@@ -173,16 +181,42 @@
         }
     }
 
-    window.copyInstallCommand = function(name) {
+    function copyInstallCommand(name, btn) {
         var cmd = 'skillhub install ' + name;
-        navigator.clipboard.writeText(cmd).then(function() {
-            var btn = document.querySelector('.copy-btn');
+
+        function showCopied() {
             if (btn) {
                 btn.textContent = t('skill.detail.copied');
                 setTimeout(function() { btn.textContent = t('skill.detail.copy'); }, 2000);
             }
-        });
-    };
+        }
+
+        // Modern Clipboard API (requires secure context: HTTPS or localhost)
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(cmd).then(showCopied).catch(function() {
+                fallbackCopy(cmd, showCopied);
+            });
+        } else {
+            fallbackCopy(cmd, showCopied);
+        }
+    }
+
+    function fallbackCopy(text, onSuccess) {
+        var textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        textarea.style.top = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            onSuccess();
+        } catch (e) {
+            console.error('Copy failed:', e);
+        }
+        document.body.removeChild(textarea);
+    }
 
     window.confirmDeleteSkill = async function(skillId, skillName) {
         var message = t('skill.detail.delete_confirm') + '\n\n' + skillName;
