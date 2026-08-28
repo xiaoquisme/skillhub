@@ -23,10 +23,57 @@ skillhub/
 ├── scripts/
 │   └── check.sh           ← 自动化反馈脚本（每次 task 完成后运行）
 ├── skillhub/              ← 源代码
-├── skills/                ← Skill 定义（SKILL.md）
+├── skills/                ← Skill 定义（含 CE 开发工作流 skills）
 ├── tests/                 ← 测试
 └── docs/plans/            ← 历史功能设计文档
 ```
+
+## 可用 Skills（开发工作流）
+
+项目内置了 Compound Engineering (CE) 开发工作流 skills，Agent 在开发过程中应优先使用这些 skills：
+
+### 核心开发流程
+
+| Skill | 何时使用 | 对应 Harness 阶段 |
+|-------|---------|-------------------|
+| `ce-brainstorm` | 探索性需求讨论、功能构思 | Plan 前置 |
+| `ce-plan` | 将需求转化为结构化实现计划 | Plan |
+| `ce-work` | 按计划执行实现 | Do |
+| `ce-debug` | 定位和修复 bug | Do (修复) |
+| `ce-commit` | 提交代码变更 | Do (收尾) |
+| `ce-commit-push-pr` | 提交 + 推送 + 创建 PR | Do (完整交付) |
+| `ce-code-review` | 代码审查 | Check |
+| `ce-explain` | 解释代码逻辑 | Guides (前馈) |
+
+### 辅助 Skills
+
+| Skill | 何时使用 |
+|-------|---------|
+| `ce-ideate` | 功能构思和创意探索 |
+| `ce-handoff` | 任务交接（跨会话） |
+| `ce-optimize` | 性能优化工作流 |
+| `ce-simplify-code` | 代码简化重构 |
+| `ce-proof` | 文档校对 |
+| `ce-doc-review` | 文档审查 |
+| `ce-strategy` | 技术策略讨论 |
+| `ce-compound` | 多步骤复合工作流 |
+| `lfg` | 全自动端到端交付（plan→implement→review→commit→PR→CI） |
+
+### 项目特定 Skills
+
+| Skill | 何时使用 |
+|-------|---------|
+| `skillhub-server` | 部署和配置 SkillHub 服务器 |
+| `skillhub-client` | 使用 SkillHub CLI 管理 skills |
+
+**使用规则**：
+- 用户说"帮我做个计划" → `ce-plan`
+- 用户说"实现这个功能" → `ce-work`（如果有计划文件）或 `ce-plan` → `ce-work`
+- 用户说"提交代码" → `ce-commit`
+- 用户说"review 一下" → `ce-code-review`
+- 用户说"解释一下这段代码" → `ce-explain`
+- 用户说"帮我 debug" → `ce-debug`
+- 用户说"全部搞定" → `lfg`（全自动）
 
 ## 外层循环：PDCA（任务分解与追踪）
 
