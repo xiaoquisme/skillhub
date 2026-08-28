@@ -1,0 +1,35 @@
+{
+  "current_iteration": "harness-refactor",
+  "iteration_start": "2026-08-28",
+  "tasks": [
+    {
+      "id": "harness-1",
+      "name": "重写 AGENTS.md 为 Harness 入口",
+      "status": "done",
+      "completed_at": "2026-08-28"
+    },
+    {
+      "id": "harness-2",
+      "name": "创建 docs/conventions/gotchas.md",
+      "status": "done",
+      "completed_at": "2026-08-28"
+    },
+    {
+      "id": "harness-3",
+      "name": "创建 state/ 目录（roadmap + progress.json）",
+      "status": "done",
+      "completed_at": "2026-08-28"
+    },
+    {
+      "id": "harness-4",
+      "name": "创建 scripts/check.sh 自动化反馈",
+      "status": "done",
+      "completed_at": "2026-08-28"
+    }
+  ],
+  "quality": {
+    "tests_passing": true,
+    "last_check": "2026-08-28",
+    "known_issues": 0
+  }
+}
