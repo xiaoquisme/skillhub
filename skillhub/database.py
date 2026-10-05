@@ -199,8 +199,9 @@ class Database:
         license: Optional[str] = None,
         published_by: Optional[str] = None,
         project_id: Optional[str] = None,
+        skill_id: Optional[str] = None,
     ) -> dict:
-        skill_id = str(uuid.uuid4())
+        skill_id = skill_id or str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
         tags_json = json.dumps(tags or [])
 
@@ -213,6 +214,23 @@ class Database:
         )
         await self.conn.commit()
         return await self.get_skill(skill_id)
+
+    async def restore_publication(self, skill_id: str, previous: Optional[dict], files: list[dict]) -> None:
+        """Restore only publication-owned DB state after an ordinary write failure."""
+        if previous is None:
+            await self.delete_skill(skill_id)
+            return
+        fields = ("display_name", "description", "category", "tags", "author", "license", "updated_at")
+        await self.conn.execute(
+            "UPDATE skills SET " + ", ".join(field + " = ?" for field in fields) + " WHERE id = ?",
+            [previous.get(field) for field in fields] + [skill_id],
+        )
+        await self.conn.execute("DELETE FROM skill_files WHERE skill_id = ?", (skill_id,))
+        await self.conn.executemany(
+            "INSERT INTO skill_files (id, skill_id, filename, content_type, size_bytes) VALUES (?, ?, ?, ?, ?)",
+            [(file["id"], skill_id, file["filename"], file.get("content_type"), file.get("size_bytes")) for file in files],
+        )
+        await self.conn.commit()
 
     async def get_skill(self, skill_id: str) -> Optional[dict]:
         async with self.conn.execute(

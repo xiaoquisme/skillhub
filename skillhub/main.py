@@ -9,6 +9,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from skillhub.api.deps import get_config, get_db, get_storage
+from skillhub.api.workbench import router as workbench_router
 from skillhub.api.skills import router as skills_router
 from skillhub.api.auth import router as auth_router
 from skillhub.api.users import router as users_router
@@ -58,6 +59,7 @@ async def health():
     return {"status": "ok", "service": "skillhub"}
 
 app.include_router(skills_router)
+app.include_router(workbench_router)
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(projects_router)
