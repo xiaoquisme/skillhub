@@ -114,6 +114,32 @@ Environment variables override YAML values:
 | `SKILLHUB_SKILLS_DIR` | `storage.skills_dir` |
 | `SKILLHUB_DEFAULT_PROJECT` | `default_project` |
 
+## Workbench Current Bundle
+
+Authenticated consumers can fetch `GET /api/workbench/skills/{skill_id}/bundle`
+using the existing `Authorization: Bearer <JWT>` credential. Keep that credential
+on the consuming server. This endpoint does not change JWT roles or permissions.
+
+The response contains `id`, `name`, `description`, `files`, and `contentDigest`.
+Files include `SKILL.md` and every stored dependency (scripts, references, binary
+assets), sorted by relative path. Each entry contains `path`, `encoding: "base64"`,
+`content`, byte `size`, and hexadecimal SHA-256 `sha256`. `contentDigest` is the
+SHA-256 of the UTF-8 concatenation of each sorted `path + "\0" + sha256 + "\0"`.
+Missing skills or missing `SKILL.md` return 404; unsafe paths and symlinks return
+400. Upload paths are validated before publication changes metadata or files.
+
+Bundle reads, complete publications, and deletions share OS file locks across
+workers on the same filesystem. Lock files are stored in a sibling directory
+`.<skills-directory-name>-locks`, which must be writable and shared by those
+workers. Complete publication directories are staged before replacement. Ordinary file
+or database write failures restore previous files and publication metadata, or
+remove a failed new publication, while retaining the lock. Reads cannot observe
+a publication or deletion in progress. Process termination and failure of the
+rollback itself are outside this guarantee; no crash recovery or distributed
+database support is provided.
+Publication keeps the existing file upsert behavior; files omitted from an
+update remain stored. There is no user-selectable version or version pinning.
+
 ## Development
 
 ```bash

@@ -1,6 +1,7 @@
 """Skill CRUD endpoints."""
 
 import json
+import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse
@@ -138,52 +139,56 @@ async def publish_skill(
             raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
         project_id = proj["id"]
 
-    existing = await db.get_skill_by_name(name, project_id)
+    # Validate and read all uploads before changing either metadata or files.
+    uploads = []
+    try:
+        for upload_file in files:
+            filename = upload_file.filename or "unnamed"
+            storage.validate_filename(filename)
+            uploads.append((filename, await upload_file.read(), upload_file.content_type))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
-    if existing:
-        skill_id = existing["id"]
-        # Publisher can only update their own skills; admin can update any
-        if current_user["role"] != "admin":
-            if existing.get("published_by") != current_user["id"]:
-                raise HTTPException(status_code=403, detail="You can only publish your own skills")
-
-        await db.update_skill(
-            skill_id,
-            display_name=display_name,
-            description=description,
-            category=category,
-            tags=json.dumps(tags_list),
-            author=author,
-            license=license,
-        )
-    else:
-        record = await db.create_skill(
-            name=name,
-            display_name=display_name,
-            description=description,
-            category=category,
-            tags=tags_list,
-            author=author,
-            license=license,
-            published_by=current_user["id"],
-            project_id=project_id,
-        )
-        skill_id = record["id"]
-
-    for upload_file in files:
-        content = await upload_file.read()
-        filename = upload_file.filename or "unnamed"
-        storage.save_skill_file(skill_id, filename, content, project_id)
-        await db.add_skill_file(
-            skill_id=skill_id,
-            filename=filename,
-            content_type=upload_file.content_type or "application/octet-stream",
-            size_bytes=len(content),
-        )
-
-    updated = await db.get_skill(skill_id)
-    assert updated is not None
-    return _skill_from_row(updated)
+    # Name lock serializes initial upserts; ID lock is shared with bundle/delete.
+    async with storage.lock("name:" + json.dumps([project_id, name])):
+        existing = await db.get_skill_by_name(name, project_id)
+        skill_id = existing["id"] if existing else str(uuid.uuid4())
+        async with storage.lock("skill:" + skill_id):
+            existing = await db.get_skill(skill_id)
+            if existing and current_user["role"] != "admin":
+                if existing.get("published_by") != current_user["id"]:
+                    raise HTTPException(status_code=403, detail="You can only publish your own skills")
+            try:
+                for filename, _, _ in uploads:
+                    storage._safe_path(skill_id, filename, project_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            previous_files = await db.get_skill_files(skill_id) if existing else []
+            with storage.publication_files(skill_id, uploads, project_id):
+                try:
+                    if existing:
+                        await db.update_skill(
+                            skill_id, display_name=display_name, description=description,
+                            category=category, tags=json.dumps(tags_list), author=author, license=license,
+                        )
+                    else:
+                        await db.create_skill(
+                            name=name, display_name=display_name, description=description,
+                            category=category, tags=tags_list, author=author, license=license,
+                            published_by=current_user["id"], project_id=project_id, skill_id=skill_id,
+                        )
+                    for filename, content, content_type in uploads:
+                        await db.add_skill_file(
+                            skill_id=skill_id, filename=filename,
+                            content_type=content_type or "application/octet-stream", size_bytes=len(content),
+                        )
+                    updated = await db.get_skill(skill_id)
+                    assert updated is not None
+                    response = _skill_from_row(updated)
+                except BaseException:
+                    await db.restore_publication(skill_id, existing, previous_files)
+                    raise
+            return response
 
 
 @router.delete("/{skill_id}", status_code=204)
@@ -196,16 +201,17 @@ async def delete_skill(
     # Require authentication for deleting
     current_user = await require_auth(request, db)
 
-    skill = await db.get_skill(skill_id)
-    if not skill:
-        raise HTTPException(status_code=404, detail="Skill not found")
+    async with storage.lock("skill:" + skill_id):
+        skill = await db.get_skill(skill_id)
+        if not skill:
+            raise HTTPException(status_code=404, detail="Skill not found")
 
-    # Ownership check: publishers can only delete their own skills; admin can delete any
-    if current_user["role"] != "admin":
-        if skill.get("published_by") != current_user["id"]:
-            raise HTTPException(status_code=403, detail="You can only delete your own skills")
+        # Ownership check: publishers can only delete their own skills; admin can delete any
+        if current_user["role"] != "admin":
+            if skill.get("published_by") != current_user["id"]:
+                raise HTTPException(status_code=403, detail="You can only delete your own skills")
 
-    project_id = skill.get("project_id")
-    storage.delete_skill(skill_id, project_id)
-    await db.delete_skill(skill_id)
-    return None
+        project_id = skill.get("project_id")
+        storage.delete_skill(skill_id, project_id)
+        await db.delete_skill(skill_id)
+        return None
