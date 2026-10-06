@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 
 from skillhub.api.deps import get_db, get_storage, require_auth
 from skillhub.database import Database
-from skillhub.models import SkillDetail, SkillFileResponse, SkillResponse
+from skillhub.models import SkillDetail, SkillFileResponse, SkillResponse, SkillUpstream
 from skillhub.storage import SkillStorage
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
@@ -69,10 +69,21 @@ async def get_skill(skill_id: str, request: Request, db: Database = Depends(get_
         raise HTTPException(status_code=404, detail="Skill not found")
 
     files = await db.get_skill_files(skill_id)
+    upstream = None
+    if skill.get("marketplace_source_id"):
+        source = await db.get_marketplace_source(skill["marketplace_source_id"])
+        upstream = SkillUpstream(
+            source=source["name"] if source else skill["marketplace_source_id"],
+            path=skill.get("upstream_path"),
+            version=skill.get("upstream_version"),
+            revision=skill.get("upstream_revision"),
+            status=skill.get("upstream_status"),
+        )
 
     return SkillDetail(
         **_skill_from_row(skill).model_dump(exclude={"file_count"}),
         file_count=len(files),
+        upstream=upstream,
         files=[
             SkillFileResponse(
                 filename=f["filename"],

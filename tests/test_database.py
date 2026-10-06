@@ -183,3 +183,164 @@ async def test_list_skills_sort_by_downloads(db):
     assert skills[0]["download_count"] == 5
     assert skills[1]["name"] == "unpopular"
     assert skills[1]["download_count"] == 1
+
+
+# --- Marketplace sources (U1) ---
+
+
+@pytest.mark.asyncio
+async def test_marketplace_source_round_trip(db):
+    """Create, get-by-name, list, update, and delete a marketplace source."""
+    created = await db.create_marketplace_source(
+        name="team-marketplace",
+        location="https://example.com/team/marketplace.git",
+        source_ref="main",
+        sync_interval_minutes=60,
+    )
+    assert created["name"] == "team-marketplace"
+    assert created["location"] == "https://example.com/team/marketplace.git"
+    assert created["source_ref"] == "main"
+    assert created["sync_interval_minutes"] == 60
+    assert created["enabled"] == 1
+    assert created["last_synced_at"] is None
+
+    by_name = await db.get_marketplace_source_by_name("team-marketplace")
+    assert by_name["id"] == created["id"]
+
+    listed = await db.list_marketplace_sources()
+    assert [s["id"] for s in listed] == [created["id"]]
+
+    updated = await db.update_marketplace_source(
+        created["id"], source_ref="v2", sync_interval_minutes=0
+    )
+    assert updated["source_ref"] == "v2"
+    assert updated["sync_interval_minutes"] == 0
+
+    assert await db.delete_marketplace_source(created["id"]) is True
+    assert await db.get_marketplace_source(created["id"]) is None
+
+
+@pytest.mark.asyncio
+async def test_marketplace_source_unique_name(db):
+    """Duplicate source names are rejected at the database level."""
+    await db.create_marketplace_source(name="dup", location="https://example.com/a.git")
+    with pytest.raises(Exception):
+        await db.create_marketplace_source(name="dup", location="https://example.com/b.git")
+
+
+@pytest.mark.asyncio
+async def test_provenance_columns_added_to_legacy_db(tmp_path):
+    """Opening a legacy database adds provenance columns; old skills get NULL provenance."""
+    import aiosqlite
+
+    legacy = tmp_path / "legacy.db"
+    conn = await aiosqlite.connect(str(legacy))
+    await conn.executescript(
+        """
+        CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            display_name TEXT,
+            description TEXT,
+            category TEXT,
+            tags TEXT,
+            author TEXT,
+            license TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            published_by TEXT,
+            download_count INTEGER DEFAULT 0,
+            project_id TEXT DEFAULT NULL,
+            UNIQUE(name, project_id)
+        );
+        INSERT INTO skills (id, name) VALUES ('old-skill', 'legacy');
+        """
+    )
+    await conn.commit()
+    await conn.close()
+
+    database = Database(legacy)
+    await database.connect()
+    try:
+        skill = await database.get_skill("old-skill")
+        assert skill["marketplace_source_id"] is None
+        assert skill["upstream_path"] is None
+        assert skill["upstream_status"] is None
+        assert skill["imported_hash"] is None
+    finally:
+        await database.close()
+
+
+@pytest.mark.asyncio
+async def test_get_skill_by_upstream(db):
+    """Provenance lookup matches (marketplace_source_id, upstream_path), not name."""
+    source = await db.create_marketplace_source(
+        name="prov-src", location="https://example.com/p.git"
+    )
+    created = await db.create_skill(
+        name="imported",
+        marketplace_source_id=source["id"],
+        upstream_path="plugins/a/skills/b",
+        upstream_version="1.0.0",
+        upstream_revision="abc123",
+        upstream_status="active",
+        imported_hash="hash-1",
+    )
+    found = await db.get_skill_by_upstream(source["id"], "plugins/a/skills/b")
+    assert found["id"] == created["id"]
+
+    # Same name with different provenance must not match
+    assert await db.get_skill_by_upstream(source["id"], "other/path") is None
+    other = await db.create_marketplace_source(
+        name="prov-src-2", location="https://example.com/q.git"
+    )
+    assert await db.get_skill_by_upstream(other["id"], "plugins/a/skills/b") is None
+
+
+@pytest.mark.asyncio
+async def test_delete_skills_by_source(db):
+    """delete_skills_by_source removes only that source's skills and their file rows."""
+    source = await db.create_marketplace_source(
+        name="del-src", location="https://example.com/d.git"
+    )
+    keep_source = await db.create_marketplace_source(
+        name="keep-src", location="https://example.com/k.git"
+    )
+    mine = await db.create_skill(name="mine", marketplace_source_id=source["id"])
+    theirs = await db.create_skill(name="theirs", marketplace_source_id=keep_source["id"])
+    local = await db.create_skill(name="local")
+    await db.add_skill_file(mine["id"], "SKILL.md")
+    await db.add_skill_file(theirs["id"], "SKILL.md")
+
+    removed = await db.delete_skills_by_source(source["id"])
+    assert removed == 1
+    assert await db.get_skill(mine["id"]) is None
+    assert await db.get_skill_files(mine["id"]) == []
+    assert await db.get_skill(theirs["id"]) is not None
+    assert await db.get_skill(local["id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_touch_marketplace_sync(db):
+    """touch_marketplace_sync records revision, report, error, and timestamp."""
+    source = await db.create_marketplace_source(
+        name="touch-src", location="https://example.com/t.git"
+    )
+    updated = await db.touch_marketplace_sync(
+        source["id"],
+        last_revision="rev1",
+        last_sync_report='{"added": 1}',
+        last_error=None,
+    )
+    assert updated["last_revision"] == "rev1"
+    assert updated["last_sync_report"] == '{"added": 1}'
+    assert updated["last_error"] is None
+    assert updated["last_synced_at"] is not None
+
+    failed = await db.touch_marketplace_sync(
+        source["id"],
+        last_revision="rev1",
+        last_sync_report=None,
+        last_error="fetch failed",
+    )
+    assert failed["last_error"] == "fetch failed"

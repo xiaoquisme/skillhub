@@ -25,11 +25,17 @@
       "name": "创建 scripts/check.sh 自动化反馈",
       "status": "done",
       "completed_at": "2026-08-28"
+    },
+    {
+      "id": "marketplace-sources",
+      "name": "Claude Code / Codex marketplace 源导入与同步更新",
+      "status": "done",
+      "completed_at": "2026-10-06"
     }
   ],
   "quality": {
     "tests_passing": true,
-    "last_check": "2026-08-28",
+    "last_check": "2026-10-06",
     "known_issues": 0
   }
 }

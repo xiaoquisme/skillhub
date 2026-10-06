@@ -14,6 +14,11 @@ from skillhub.api.skills import router as skills_router
 from skillhub.api.auth import router as auth_router
 from skillhub.api.users import router as users_router
 from skillhub.api.projects import router as projects_router
+from skillhub.api.marketplaces import (
+    router as marketplaces_router,
+    start_interval_task,
+    stop_interval_task,
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,7 +39,12 @@ async def lifespan(app: FastAPI):
                 role="admin",
             )
 
+    # KTD6: interval sync runs unconditionally; it re-checks due sources each
+    # tick so sources created after boot are picked up without a restart.
+    start_interval_task(app, db, storage)
+
     yield
+    stop_interval_task(app)
     await db.close()
 
 
@@ -63,6 +73,7 @@ app.include_router(workbench_router)
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(projects_router)
+app.include_router(marketplaces_router)
 
 
 # --- Auth middleware for UI pages ---

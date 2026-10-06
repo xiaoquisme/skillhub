@@ -78,6 +78,46 @@ const Admin = {
         if (loadProjectsBtn) {
             loadProjectsBtn.addEventListener('click', () => this.loadProjects());
         }
+
+        // Create marketplace source form
+        const createMarketplaceForm = document.getElementById('create-marketplace-form');
+        if (createMarketplaceForm) {
+            createMarketplaceForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const name = document.getElementById('new-marketplace-name').value;
+                const location = document.getElementById('new-marketplace-location').value;
+                const source_ref = document.getElementById('new-marketplace-ref').value || null;
+                const project = document.getElementById('new-marketplace-project').value || null;
+                const sync_interval_minutes = parseInt(document.getElementById('new-marketplace-interval').value, 10) || 0;
+
+                try {
+                    const response = await fetch('/api/marketplaces', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + Auth.getToken(),
+                        },
+                        body: JSON.stringify({ name, location, source_ref, project, sync_interval_minutes }),
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json().catch(() => ({}));
+                        throw new Error(error.detail || '添加源失败');
+                    }
+
+                    createMarketplaceForm.reset();
+                    this.loadMarketplaces();
+                } catch (err) {
+                    alert(err.message);
+                }
+            });
+        }
+
+        // Load marketplaces button
+        const loadMarketplacesBtn = document.getElementById('load-marketplaces-btn');
+        if (loadMarketplacesBtn) {
+            loadMarketplacesBtn.addEventListener('click', () => this.loadMarketplaces());
+        }
     },
 
     async loadUsers() {
@@ -294,6 +334,105 @@ const Admin = {
             }
 
             this.loadProjects();
+        } catch (err) {
+            alert(err.message);
+        }
+    },
+
+    // ========== Marketplace Sources ==========
+
+    async loadMarketplaces() {
+        const container = document.getElementById('marketplaces-list');
+        if (!container) return;
+
+        try {
+            const response = await fetch('/api/marketplaces', {
+                headers: { 'Authorization': 'Bearer ' + Auth.getToken() },
+            });
+
+            if (!response.ok) throw new Error('加载源列表失败');
+
+            const sources = await response.json();
+
+            if (sources.length === 0) {
+                container.innerHTML = '<p class="empty">暂无 Marketplace 源</p>';
+                return;
+            }
+
+            container.innerHTML = sources.map(source => {
+                const lastSync = source.last_synced_at ? new Date(source.last_synced_at).toLocaleString() : '从未同步';
+                const status = source.last_error
+                    ? `<span class="role-badge" style="background:#fde8e8;color:#c81e1e">失败</span>`
+                    : '';
+                return `
+                <div class="user-card">
+                    <div class="user-info">
+                        <strong>${this.escapeHtml(source.name)}</strong>
+                        <span class="role-badge">${this.escapeHtml(source.location)}</span>
+                        ${source.source_ref ? `<span class="text-muted">ref: ${this.escapeHtml(source.source_ref)}</span>` : ''}
+                        <span class="text-muted">已导入 ${source.imported_skill_count} 个 skill · 上次同步: ${lastSync}</span>
+                        ${status}
+                        ${source.last_error ? `<span class="text-muted">${this.escapeHtml(source.last_error)}</span>` : ''}
+                    </div>
+                    <div class="user-actions">
+                        <button class="btn btn-sm btn-primary" onclick="Admin.syncMarketplace('${source.id}', '${this.escapeHtml(source.name)}')">同步</button>
+                        <button class="btn btn-sm btn-danger" onclick="Admin.deleteMarketplace('${source.id}', '${this.escapeHtml(source.name)}', ${source.imported_skill_count})">删除</button>
+                    </div>
+                </div>`;
+            }).join('');
+        } catch (err) {
+            container.innerHTML = '<p class="error">加载源列表失败</p>';
+            console.error(err);
+        }
+    },
+
+    async syncMarketplace(sourceId, sourceName) {
+        if (!confirm(`立即同步源 "${sourceName}" 吗？\n已本地修改的 skill 不会被覆盖。`)) return;
+
+        try {
+            const response = await fetch(`/api/marketplaces/${sourceId}/sync`, {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + Auth.getToken() },
+            });
+
+            const report = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(report.detail || '同步失败');
+            }
+
+            const lines = [
+                `新增: ${(report.added || []).length}`,
+                `更新: ${(report.updated || []).length}`,
+                `未变化: ${(report.unchanged || []).length}`,
+                `上游已移除: ${(report.missing || []).length}`,
+                `跳过(名称冲突): ${(report.skipped_conflicts || []).length}`,
+                `跳过(本地已修改): ${(report.skipped_local_edits || []).length}`,
+            ];
+            if ((report.warnings || []).length) lines.push(`警告: ${report.warnings.join('; ')}`);
+            if ((report.errors || []).length) lines.push(`错误: ${report.errors.join('; ')}`);
+            alert(`同步完成\n${lines.join('\n')}`);
+
+            this.loadMarketplaces();
+        } catch (err) {
+            alert(err.message);
+        }
+    },
+
+    async deleteMarketplace(sourceId, sourceName, importedCount) {
+        if (!confirm(`确定要删除源 "${sourceName}" 吗？\n将同时删除它导入的 ${importedCount} 个 skill。`)) return;
+
+        try {
+            const response = await fetch(`/api/marketplaces/${sourceId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': 'Bearer ' + Auth.getToken() },
+            });
+
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.detail || '删除源失败');
+            }
+
+            this.loadMarketplaces();
         } catch (err) {
             alert(err.message);
         }

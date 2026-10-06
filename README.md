@@ -140,6 +140,49 @@ database support is provided.
 Publication keeps the existing file upsert behavior; files omitted from an
 update remain stored. There is no user-selectable version or version pinning.
 
+## Marketplace Sources
+
+Admins can register external skill marketplaces as import sources. SkillHub
+fetches the repository, reads its catalog, and imports every skill it finds as
+a normal SkillHub skill — searchable, downloadable, and installable through the
+existing API and CLI.
+
+Supported catalog formats:
+
+- Claude Code plugin marketplaces (`.claude-plugin/marketplace.json`)
+- Codex plugin marketplaces (`.agents/plugins/marketplace.json`)
+- Bare skills trees (`skills/*/SKILL.md`, `.agents/skills/*/SKILL.md`) when no
+  catalog manifest exists
+
+Source locations must be git repositories: `https`/`ssh`/`file` URLs or
+`owner/repo` GitHub shorthand. Plain directory paths are rejected. Plugin
+entries using `npm`, `archive`, or `command` sources are skipped with a warning;
+relative, `github`, `url`, and `git-subdir` sources are supported.
+
+Manage sources from the admin page or the API:
+
+- `GET /api/marketplaces` / `POST` / `PATCH` / `DELETE /api/marketplaces/{id}`
+  (mutations are admin-only; a unique name is required at creation)
+- `POST /api/marketplaces/{id}/sync` runs a manual sync and returns the report
+- `GET /api/marketplaces/{id}/skills` lists imported skills with upstream status
+- `sync_interval_minutes > 0` enables periodic in-process sync (off by default)
+
+Sync semantics:
+
+- Change detection is content-based per skill; re-syncs only touch skills whose
+  upstream content changed.
+- Imported skills keep their identity and download count across updates.
+- Skills removed upstream are flagged `missing-upstream` and kept until an
+  admin deletes them. Sync never deletes.
+- Name collisions with skills not imported by the same source are skipped and
+  reported — locally published skills are never overwritten.
+- Locally edited imported skills win: the next sync skips and reports them
+  instead of overwriting the edit.
+- Removing a source deletes the skills it imported (the admin UI shows the
+  count first).
+- A failed fetch or parse leaves previously imported state untouched and
+  records the error on the source.
+
 ## Development
 
 ```bash
