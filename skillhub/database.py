@@ -52,6 +52,20 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS marketplace_sources (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    location TEXT NOT NULL,
+    source_ref TEXT,
+    project_id TEXT DEFAULT NULL,
+    sync_interval_minutes INTEGER DEFAULT 0,
+    enabled INTEGER DEFAULT 1,
+    last_revision TEXT,
+    last_error TEXT,
+    last_sync_report TEXT,
+    last_synced_at TIMESTAMP
+);
 """
 
 ALLOWED_SORT_FIELDS = {"created_at", "updated_at", "name", "category", "download_count"}
@@ -87,6 +101,21 @@ class Database:
             await self._conn.commit()
         except aiosqlite.OperationalError:
             pass  # Column already exists
+
+        # Migration: add marketplace provenance columns to existing databases
+        for column in (
+            "marketplace_source_id TEXT DEFAULT NULL",
+            "upstream_path TEXT",
+            "upstream_version TEXT",
+            "upstream_revision TEXT",
+            "upstream_status TEXT",
+            "imported_hash TEXT",
+        ):
+            try:
+                await self._conn.execute(f"ALTER TABLE skills ADD COLUMN {column}")
+                await self._conn.commit()
+            except aiosqlite.OperationalError:
+                pass  # Column already exists
 
     async def close(self) -> None:
         if self._conn:
@@ -200,6 +229,12 @@ class Database:
         published_by: Optional[str] = None,
         project_id: Optional[str] = None,
         skill_id: Optional[str] = None,
+        marketplace_source_id: Optional[str] = None,
+        upstream_path: Optional[str] = None,
+        upstream_version: Optional[str] = None,
+        upstream_revision: Optional[str] = None,
+        upstream_status: Optional[str] = None,
+        imported_hash: Optional[str] = None,
     ) -> dict:
         skill_id = skill_id or str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
@@ -207,10 +242,14 @@ class Database:
 
         await self.conn.execute(
             """INSERT INTO skills (id, name, display_name, description, category,
-               tags, author, license, created_at, updated_at, published_by, project_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               tags, author, license, created_at, updated_at, published_by, project_id,
+               marketplace_source_id, upstream_path, upstream_version,
+               upstream_revision, upstream_status, imported_hash)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (skill_id, name, display_name, description, category,
-             tags_json, author, license, now, now, published_by, project_id),
+             tags_json, author, license, now, now, published_by, project_id,
+             marketplace_source_id, upstream_path, upstream_version,
+             upstream_revision, upstream_status, imported_hash),
         )
         await self.conn.commit()
         return await self.get_skill(skill_id)
@@ -340,6 +379,139 @@ class Database:
             (skill_id,),
         )
         await self.conn.commit()
+
+    async def get_skill_by_upstream(
+        self, marketplace_source_id: str, upstream_path: str
+    ) -> Optional[dict]:
+        async with self.conn.execute(
+            "SELECT * FROM skills WHERE marketplace_source_id = ? AND upstream_path = ?",
+            (marketplace_source_id, upstream_path),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return dict(row)
+        return None
+
+    async def list_skills_for_source(self, marketplace_source_id: str) -> list[dict]:
+        async with self.conn.execute(
+            "SELECT * FROM skills WHERE marketplace_source_id = ? ORDER BY name",
+            (marketplace_source_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def count_skills_for_source(self, marketplace_source_id: str) -> int:
+        async with self.conn.execute(
+            "SELECT COUNT(*) FROM skills WHERE marketplace_source_id = ?",
+            (marketplace_source_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def count_skills_by_source(self) -> dict[str, int]:
+        async with self.conn.execute(
+            "SELECT marketplace_source_id, COUNT(*) AS n FROM skills "
+            "WHERE marketplace_source_id IS NOT NULL GROUP BY marketplace_source_id"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return {row["marketplace_source_id"]: row["n"] for row in rows}
+
+    # --- Marketplace Sources CRUD ---
+
+    async def create_marketplace_source(
+        self,
+        name: str,
+        location: str,
+        source_ref: Optional[str] = None,
+        project_id: Optional[str] = None,
+        sync_interval_minutes: int = 0,
+        enabled: int = 1,
+    ) -> dict:
+        source_id = str(uuid.uuid4())
+        await self.conn.execute(
+            """INSERT INTO marketplace_sources
+               (id, name, location, source_ref, project_id, sync_interval_minutes, enabled)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (source_id, name, location, source_ref, project_id,
+             sync_interval_minutes, enabled),
+        )
+        await self.conn.commit()
+        return await self.get_marketplace_source(source_id)
+
+    async def get_marketplace_source(self, source_id: str) -> Optional[dict]:
+        async with self.conn.execute(
+            "SELECT * FROM marketplace_sources WHERE id = ?", (source_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_marketplace_source_by_name(self, name: str) -> Optional[dict]:
+        async with self.conn.execute(
+            "SELECT * FROM marketplace_sources WHERE name = ?", (name,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def list_marketplace_sources(self) -> list[dict]:
+        async with self.conn.execute(
+            "SELECT * FROM marketplace_sources ORDER BY name"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def update_marketplace_source(self, source_id: str, **kwargs) -> Optional[dict]:
+        if not kwargs:
+            return await self.get_marketplace_source(source_id)
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs)
+        values = list(kwargs.values()) + [source_id]
+        await self.conn.execute(
+            f"UPDATE marketplace_sources SET {set_clause} WHERE id = ?", values
+        )
+        await self.conn.commit()
+        return await self.get_marketplace_source(source_id)
+
+    async def delete_marketplace_source(self, source_id: str) -> bool:
+        async with self.conn.execute(
+            "DELETE FROM marketplace_sources WHERE id = ?", (source_id,)
+        ) as cursor:
+            await self.conn.commit()
+            return cursor.rowcount > 0
+
+    async def delete_skills_by_source(self, marketplace_source_id: str) -> int:
+        """Remove skill and skill_file rows for a source; disk files are the caller's job."""
+        async with self.conn.execute(
+            "SELECT id FROM skills WHERE marketplace_source_id = ?",
+            (marketplace_source_id,),
+        ) as cursor:
+            skill_ids = [row["id"] for row in await cursor.fetchall()]
+        for skill_id in skill_ids:
+            await self.conn.execute(
+                "DELETE FROM skill_files WHERE skill_id = ?", (skill_id,)
+            )
+        async with self.conn.execute(
+            "DELETE FROM skills WHERE marketplace_source_id = ?",
+            (marketplace_source_id,),
+        ) as cursor:
+            deleted = cursor.rowcount
+        await self.conn.commit()
+        return deleted
+
+    async def touch_marketplace_sync(
+        self,
+        source_id: str,
+        last_revision: Optional[str] = None,
+        last_sync_report: Optional[str] = None,
+        last_error: Optional[str] = None,
+    ) -> Optional[dict]:
+        now = datetime.now(UTC).isoformat()
+        await self.conn.execute(
+            """UPDATE marketplace_sources
+               SET last_revision = ?, last_sync_report = ?, last_error = ?, last_synced_at = ?
+               WHERE id = ?""",
+            (last_revision, last_sync_report, last_error, now, source_id),
+        )
+        await self.conn.commit()
+        return await self.get_marketplace_source(source_id)
 
     # --- Users CRUD ---
 

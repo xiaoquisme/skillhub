@@ -50,6 +50,17 @@ class SkillResponse(SkillBase):
 
 class SkillDetail(SkillResponse):
     files: list["SkillFileResponse"] = Field(default_factory=list)
+    upstream: Optional["SkillUpstream"] = None
+
+
+class SkillUpstream(BaseModel):
+    """Additive provenance for marketplace-imported skills (U4)."""
+
+    source: Optional[str] = None
+    path: Optional[str] = None
+    version: Optional[str] = None
+    revision: Optional[str] = None
+    status: Optional[str] = None
 
 
 class SkillFileResponse(BaseModel):
@@ -96,6 +107,53 @@ class TokenResponse(BaseModel):
 
 class AdminPasswordReset(BaseModel):
     new_password: str
+
+
+# --- Marketplace models ---
+
+class MarketplaceSourceBase(BaseModel):
+    name: str
+    location: str
+    source_ref: Optional[str] = None
+    project: Optional[str] = None
+    sync_interval_minutes: int = 0
+    enabled: int = 1
+
+
+class MarketplaceSourceCreate(MarketplaceSourceBase):
+    pass
+
+
+class MarketplaceSourceUpdate(BaseModel):
+    location: Optional[str] = None
+    source_ref: Optional[str] = None
+    project: Optional[str] = None
+    sync_interval_minutes: Optional[int] = None
+    enabled: Optional[int] = None
+
+
+class MarketplaceSourceResponse(BaseModel):
+    id: str
+    name: str
+    location: str
+    source_ref: Optional[str] = None
+    project: Optional[str] = None
+    sync_interval_minutes: int = 0
+    enabled: int = 1
+    last_revision: Optional[str] = None
+    last_error: Optional[str] = None
+    last_sync_report: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
+    imported_skill_count: int = 0
+
+
+class MarketplaceSkillResponse(BaseModel):
+    id: str
+    name: str
+    upstream_path: Optional[str] = None
+    upstream_version: Optional[str] = None
+    upstream_revision: Optional[str] = None
+    upstream_status: Optional[str] = None
 
 
 SkillDetail.model_rebuild()
