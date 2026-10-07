@@ -1,7 +1,8 @@
 """Marketplace source admin endpoints (U4, R1/R2/R9/R10)."""
 
 import asyncio
-import json
+import subprocess
+from datetime import UTC, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -9,7 +10,7 @@ from starlette.concurrency import run_in_threadpool
 
 from skillhub.api.deps import get_db, get_storage, require_auth
 from skillhub.database import Database
-from skillhub.marketplace.fetch import fetch_checkout
+from skillhub.marketplace.fetch import fetch_checkout, normalize_location
 from skillhub.marketplace.models import FetchError, ParseError, ParseResult, SourceSpec
 from skillhub.marketplace.parse import parse_checkout
 from skillhub.marketplace.sync import SyncReport, sync_source
@@ -44,12 +45,10 @@ def _source_from_row(row: dict, imported_skill_count: int = 0) -> MarketplaceSou
 
 
 async def _count_imported(db: Database, source_id: str) -> int:
-    return len(await db.list_skills_for_source(source_id))
+    return await db.count_skills_for_source(source_id)
 
 
 def _validate_location(location: str) -> None:
-    from skillhub.marketplace.fetch import normalize_location
-
     try:
         normalize_location(location)
     except FetchError as exc:
@@ -63,7 +62,12 @@ async def _fetch_and_parse(source: dict) -> tuple[Optional[ParseResult], str, Op
         def _run():
             with fetch_checkout(spec) as checkout:
                 revision = _checkout_revision(checkout)
-                result = parse_checkout(checkout, revision)
+                # Second-clone fetcher for external plugin sources (KTD7).
+                result = parse_checkout(
+                    checkout,
+                    revision,
+                    fetch=lambda loc, ref: fetch_checkout(SourceSpec(location=loc, ref=ref)),
+                )
                 return result, revision
 
         return (*await run_in_threadpool(_run), None)
@@ -72,8 +76,6 @@ async def _fetch_and_parse(source: dict) -> tuple[Optional[ParseResult], str, Op
 
 
 def _checkout_revision(checkout) -> str:
-    import subprocess
-
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -96,8 +98,9 @@ async def list_sources(
 ):
     await require_auth(request, db)
     rows = await db.list_marketplace_sources()
+    counts = await db.count_skills_by_source()
     return [
-        _source_from_row(row, await _count_imported(db, row["id"])) for row in rows
+        _source_from_row(row, counts.get(row["id"], 0)) for row in rows
     ]
 
 
@@ -261,8 +264,6 @@ async def sync_due_sources(db: Database, storage: SkillStorage) -> int:
             continue
         last = row.get("last_synced_at")
         if last:
-            from datetime import UTC, datetime
-
             elapsed = (datetime.now(UTC) - datetime.fromisoformat(last)).total_seconds()
             if elapsed < interval * 60:
                 continue

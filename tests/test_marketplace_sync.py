@@ -5,7 +5,7 @@ import pytest_asyncio
 
 from skillhub.database import Database
 from skillhub.marketplace.models import ParseResult, UpstreamSkill
-from skillhub.marketplace.sync import SyncReport, sync_source
+from skillhub.marketplace.sync import sync_source
 from skillhub.storage import SkillStorage
 
 
@@ -26,19 +26,6 @@ def make_skill(name: str, path: str, body: str = "body v1", **kw) -> UpstreamSki
         plugin=kw.get("plugin", "p"),
         version=kw.get("version", "1.0.0"),
         files={"SKILL.md": f"---\nname: {name}\ndescription: d\n---\n{body}\n".encode()},
-    )
-
-
-def source_row(db, name="src", **kw):
-    return dict(
-        id="source-1",
-        name=name,
-        location="https://example.com/m.git",
-        source_ref=None,
-        project_id=None,
-        sync_interval_minutes=0,
-        enabled=1,
-        **kw,
     )
 
 

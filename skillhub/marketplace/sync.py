@@ -9,6 +9,7 @@ makes upstream updates and local-edit detection (KD4) both work.
 
 import hashlib
 import json
+import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -52,6 +53,10 @@ def content_digest(files: dict[str, bytes]) -> str:
         hasher.update(hashlib.sha256(files[path]).hexdigest().encode("ascii"))
         hasher.update(b"\0")
     return hasher.hexdigest()
+
+
+def _content_type(filename: str) -> str:
+    return "text/markdown" if filename.endswith(".md") else "application/octet-stream"
 
 
 def _stored_files(storage: SkillStorage, skill_id: str, project_id: Optional[str]) -> dict[str, bytes]:
@@ -146,8 +151,6 @@ async def _apply_skill(
         if by_name is not None:
             report.skipped_conflicts.append(name)
             return
-        import uuid
-
         skill_id = str(uuid.uuid4())
         async with storage.lock("skill:" + skill_id):
             await db.create_skill(
@@ -171,7 +174,7 @@ async def _apply_skill(
             _write_files(storage, skill_id, upstream.files, project_id)
             for filename, content in upstream.files.items():
                 await db.add_skill_file(
-                    skill_id, filename, "text/markdown" if filename.endswith(".md") else "application/octet-stream", len(content)
+                    skill_id, filename, _content_type(filename), len(content)
                 )
     report.added.append(name)
 
@@ -189,7 +192,7 @@ async def _write_skill(
     await db.delete_skill_files(skill_id)
     for filename, content in upstream.files.items():
         await db.add_skill_file(
-            skill_id, filename, "text/markdown" if filename.endswith(".md") else "application/octet-stream", len(content)
+            skill_id, filename, _content_type(filename), len(content)
         )
     await db.update_skill(
         skill_id,
@@ -209,7 +212,7 @@ def _write_files(
 ) -> None:
     with storage.publication_files(
         skill_id,
-        [(path, content, "text/markdown" if path.endswith(".md") else "application/octet-stream") for path, content in files.items()],
+        [(path, content, _content_type(path)) for path, content in files.items()],
         project_id,
     ):
         pass

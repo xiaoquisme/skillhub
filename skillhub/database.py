@@ -400,6 +400,22 @@ class Database:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
+    async def count_skills_for_source(self, marketplace_source_id: str) -> int:
+        async with self.conn.execute(
+            "SELECT COUNT(*) FROM skills WHERE marketplace_source_id = ?",
+            (marketplace_source_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def count_skills_by_source(self) -> dict[str, int]:
+        async with self.conn.execute(
+            "SELECT marketplace_source_id, COUNT(*) AS n FROM skills "
+            "WHERE marketplace_source_id IS NOT NULL GROUP BY marketplace_source_id"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return {row["marketplace_source_id"]: row["n"] for row in rows}
+
     # --- Marketplace Sources CRUD ---
 
     async def create_marketplace_source(
